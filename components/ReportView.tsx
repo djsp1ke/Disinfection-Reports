@@ -32,8 +32,14 @@ const FileImage = ({ file, className, alt, fallbackSrc }: { file?: File, classNa
   return <img src={src} className={className} alt={alt || "Report image"} />;
 };
 
+interface PageProps {
+  children: React.ReactNode;
+  pageNum?: number;
+  className?: string;
+}
+
 // A4 Page Container Component
-const Page = ({ children, pageNum, className = '' }: { children: React.ReactNode, pageNum?: number, className?: string }) => (
+const Page: React.FC<PageProps> = ({ children, pageNum, className = '' }) => (
   <div className={`w-[210mm] h-[297mm] mx-auto bg-white shadow-xl mb-8 relative flex flex-col print:shadow-none print:mb-0 print:break-after-page overflow-hidden ${className}`}>
      <div className="flex-grow p-12 flex flex-col relative h-full z-10">
         {children}
