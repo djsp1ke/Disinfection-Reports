@@ -1,3 +1,4 @@
+
 export type JobType = 'Pipework' | 'Tank';
 
 export interface Tank {
@@ -43,10 +44,18 @@ export interface ReportData {
   // Technician
   technicianName: string;
 
-  // Process
+  // Process & Calculations (PD 855468)
   disinfectant: string;
-  concentrationTarget: string; // e.g. 55 PPM
+  chemicalStrength: string; // e.g. 14%
+  concentrationTarget: string; // e.g. 50 PPM
   contactTime: string; // e.g. 1 Hour
+  
+  systemVolume: string; // Litres
+  amountAdded: string; // Calculated amount of chemical added
+  
+  neutralisingAgent: string; // e.g. Sodium Thiosulfate
+  preFlushDuration: string; // e.g. 10 mins
+
   injectionPoint: string;
 
   // Tank Details (For Tank Mode)

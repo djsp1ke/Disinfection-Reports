@@ -1,9 +1,21 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 import { ReportData } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
 export const generateReportAnalysis = async (data: ReportData) => {
+  // Use the specific variable user configured in Netlify (GEMINI_API_KEY)
+  // Fallback to API_KEY if available.
+  const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+
+  if (!apiKey) {
+    console.error("API Key is missing. Please set GEMINI_API_KEY in your Netlify environment variables.");
+    // We proceed to attempt initialization, which might fail inside the SDK if key is empty,
+    // but this allows the UI to handle the error state naturally via the try/catch block below.
+  }
+
+  // Initialize the client inside the function to ensure we use the current API key
+  const ai = new GoogleGenAI({ apiKey: apiKey || '' });
+
   const tankInfo = data.tanks && data.tanks.length > 0 
     ? data.tanks.map(t => `${t.description} (${t.capacity}) in ${t.location}`).join(', ')
     : "Cold Water Storage Tank";
@@ -28,31 +40,41 @@ export const generateReportAnalysis = async (data: ReportData) => {
     Client Company: ${data.clientName}
     Site Name: ${data.siteName}
     Site Address: ${data.siteAddress}
+    
     Disinfectant: ${data.disinfectant}
     Concentration: ${data.concentrationTarget}
     Contact Time: ${data.contactTime}
+    Amount Added: ${data.amountAdded}
+    System Volume: ${data.systemVolume}
     Injection Point: ${data.injectionPoint}
+    Pre-Flush: ${data.preFlushDuration}
+    Neutralisation: ${data.neutralisingAgent}
 
     Also provide a short "Comments and Recommendations" section. Example: "The small CAT5 tank in the large storage area had no power... All works completed, thank you." If no specific issues are noted in the data provided below, just say "All works completed successfully. Post disinfection samples were taken."
 
     Output structured JSON.
   `;
 
-  const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
-    contents: { parts: [{ text: prompt }] },
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          scopeOfWorks: { type: Type.STRING, description: "The narrative paragraph for section 2 Scope of Works." },
-          comments: { type: Type.STRING, description: "Short comments for section 8." }
-        },
-        required: ["scopeOfWorks", "comments"]
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: { parts: [{ text: prompt }] },
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            scopeOfWorks: { type: Type.STRING, description: "The narrative paragraph for section 2 Scope of Works." },
+            comments: { type: Type.STRING, description: "Short comments for section 8." }
+          },
+          required: ["scopeOfWorks", "comments"]
+        }
       }
-    }
-  });
+    });
 
-  return JSON.parse(response.text || "{}");
+    return JSON.parse(response.text || "{}");
+  } catch (error) {
+    console.error("Gemini API Error:", error);
+    throw error;
+  }
 };

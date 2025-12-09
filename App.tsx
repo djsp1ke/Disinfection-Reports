@@ -1,8 +1,20 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import ImageUpload from './components/ImageUpload';
 import ReportView from './components/ReportView';
 import { generateReportAnalysis } from './services/geminiService';
 import { ReportData, ReportImages, TestPoint, ReportPhoto, JobType, Tank, TankPhotoSet } from './types';
+
+const CLIENT_LIST = [
+  "NHS Property Services",
+  "Balfour Beatty",
+  "Kier Construction",
+  "Mitie Facilities Management",
+  "CBRE",
+  "Engie",
+  "Local Council",
+  "University Estates Dept"
+];
 
 const INITIAL_TEST_POINT: TestPoint = {
   id: '', 
@@ -30,14 +42,19 @@ const INITIAL_DATA: ReportData = {
   siteAddress: '',
   serviceDate: new Date().toISOString().split('T')[0],
   technicianName: '',
-  disinfectant: 'Sodium Hypochlorite 12.5%',
-  concentrationTarget: '50 PPM',
+  disinfectant: 'Sodium Hypochlorite',
+  chemicalStrength: '14', // Default %
+  concentrationTarget: '50', // PPM
   contactTime: '1 Hour',
+  systemVolume: '',
+  amountAdded: '',
+  neutralisingAgent: 'Sodium Thiosulfate',
+  preFlushDuration: '10 Minutes',
   injectionPoint: '',
   tanks: [],
   testPoints: [],
   incomingMainsPh: '7.0',
-  residualChlorine: '<10 PPM',
+  residualChlorine: '<0.5',
   scopeOfWorks: '',
   comments: ''
 };
@@ -65,19 +82,74 @@ const App: React.FC = () => {
   const [data, setData] = useState<ReportData>(INITIAL_DATA);
   const [images, setImages] = useState<ReportImages>({ evidencePhotos: [], tankPhotos: [] });
   const [phWarning, setPhWarning] = useState<string | null>(null);
+  const [recommendedTime, setRecommendedTime] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Effect to check pH levels for Sodium Hypochlorite
+  // --- Auto-Calculate Dosage ---
   useEffect(() => {
+    const vol = parseFloat(data.systemVolume);
+    const target = parseFloat(data.concentrationTarget);
+    const strength = parseFloat(data.chemicalStrength);
+
+    if (!isNaN(vol) && !isNaN(target) && !isNaN(strength) && strength > 0) {
+      // Formula: (Volume (L) * Target (mg/L)) / (Strength (%) * 10,000) = Litres of Chemical
+      const litresRequired = (vol * target) / (strength * 10000);
+      
+      let displayAmount = "";
+      if (litresRequired < 1) {
+        displayAmount = `${Math.round(litresRequired * 1000)} ml`;
+      } else {
+        displayAmount = `${litresRequired.toFixed(2)} Litres`;
+      }
+      
+      setData(prev => ({ ...prev, amountAdded: displayAmount }));
+    }
+  }, [data.systemVolume, data.concentrationTarget, data.chemicalStrength]);
+
+
+  // --- pH & Contact Time Logic (PD 855468 Table 2) ---
+  useEffect(() => {
+    // Only apply pH logic to Sodium Hypochlorite as it's pH dependent
     if (data.disinfectant.includes('Sodium Hypochlorite')) {
       const ph = parseFloat(data.incomingMainsPh);
-      if (!isNaN(ph) && ph > 7.6) {
-        setPhWarning('pH > 7.6 detected. BS 8558 recommends increasing contact time by 15 minutes.');
-      } else {
+      
+      if (isNaN(ph)) {
         setPhWarning(null);
+        setRecommendedTime(null);
+        return;
+      }
+
+      // Logic from Table 2 of PD 855468
+      if (ph < 7.6) {
+        setPhWarning(null);
+        setRecommendedTime(null); // Standard 1 hour applies
+      } else {
+        let msg = '';
+        let time = '';
+
+        if (ph >= 7.6 && ph < 7.7) {
+          msg = "pH 7.6 detected. Increase contact time.";
+          time = "1.00 Hour"; // Strictly table says 1.00, but logic implies sensitivity
+        } else if (ph >= 7.7 && ph < 7.85) {
+          msg = "pH ≥ 7.7 detected. High pH reduces chlorine efficacy.";
+          time = "1.25 Hours (1h 15m)";
+        } else if (ph >= 7.85 && ph < 8.0) {
+           msg = "pH ≥ 7.85 detected. Significant efficacy loss.";
+           time = "1.67 Hours (1h 40m)";
+        } else if (ph >= 8.0 && ph < 8.45) {
+           msg = "pH ≥ 8.0 detected. Severe efficacy loss.";
+           time = "2.50 Hours (2h 30m)";
+        } else if (ph >= 8.45) {
+           msg = "pH ≥ 8.45 detected. Chlorine not recommended without pH correction.";
+           time = "5.00 Hours";
+        }
+
+        setPhWarning(msg);
+        setRecommendedTime(time);
       }
     } else {
       setPhWarning(null);
+      setRecommendedTime(null);
     }
   }, [data.incomingMainsPh, data.disinfectant]);
 
@@ -97,6 +169,31 @@ const App: React.FC = () => {
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleChemicalChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+     const chem = e.target.value;
+     let newStrength = data.chemicalStrength;
+     let newTarget = data.concentrationTarget;
+
+     // Set defaults based on common industry products
+     if (chem === 'Sodium Hypochlorite') {
+       newStrength = '14';
+       newTarget = '50';
+     } else if (chem === 'Hydrogen Peroxide (Silver Stabilised)') {
+       newStrength = '35'; // Common commercial strength
+       newTarget = '150';  // Common target for Silver Peroxide
+     } else if (chem === 'Chlorine Dioxide') {
+       newStrength = '0.3'; // Often generated at low %
+       newTarget = '50';
+     }
+
+     setData(prev => ({ 
+       ...prev, 
+       disinfectant: chem,
+       chemicalStrength: newStrength,
+       concentrationTarget: newTarget
+     }));
   };
 
   // --- Tank Management ---
@@ -153,7 +250,6 @@ const App: React.FC = () => {
     setImages(prev => ({ ...prev, evidencePhotos: prev.evidencePhotos.filter(p => p.id !== id) }));
   };
 
-  // Update a specific tank photo
   const handleTankPhotoUpdate = (tankId: string, type: 'before' | 'after', file: File | undefined) => {
     setImages(prev => ({
       ...prev,
@@ -167,7 +263,6 @@ const App: React.FC = () => {
     if (data.jobType === type) return;
 
     setData(prev => {
-      // If switching TO tank mode and no tanks exist, add one default tank
       const newTanks = (type === 'Tank' && prev.tanks.length === 0) 
         ? [{ ...INITIAL_TANK, id: Date.now().toString() }] 
         : prev.tanks;
@@ -205,13 +300,11 @@ const App: React.FC = () => {
   const handleSaveProject = async () => {
     setIsGenerating(true);
     try {
-      // Convert all images to Base64 strings for JSON storage
       const serializedImages: any = {
         evidencePhotos: [],
         tankPhotos: []
       };
 
-      // Single Files
       if (images.companyLogo) serializedImages.companyLogo = await fileToBase64(images.companyLogo);
       if (images.companyHeader) serializedImages.companyHeader = await fileToBase64(images.companyHeader);
       if (images.certificate) serializedImages.certificate = await fileToBase64(images.certificate);
@@ -220,7 +313,6 @@ const App: React.FC = () => {
       if (images.dosingSetup) serializedImages.dosingSetup = await fileToBase64(images.dosingSetup);
       if (images.initialChemical) serializedImages.initialChemical = await fileToBase64(images.initialChemical);
 
-      // Evidence Photos array
       for (const p of images.evidencePhotos) {
         serializedImages.evidencePhotos.push({
           id: p.id,
@@ -229,7 +321,6 @@ const App: React.FC = () => {
         });
       }
 
-      // Tank Photos array
       for (const t of images.tankPhotos) {
         serializedImages.tankPhotos.push({
           tankId: t.tankId,
@@ -239,7 +330,7 @@ const App: React.FC = () => {
       }
 
       const exportObj = {
-        version: "1.0",
+        version: "1.1",
         timestamp: new Date().toISOString(),
         data,
         images: serializedImages
@@ -281,10 +372,8 @@ const App: React.FC = () => {
         throw new Error("Invalid file format");
       }
 
-      // Restore Data
       setData(parsed.data);
 
-      // Restore Images (Convert Base64 back to File objects)
       const restoredImages: ReportImages = {
         evidencePhotos: [],
         tankPhotos: []
@@ -298,7 +387,6 @@ const App: React.FC = () => {
       if (parsed.images.dosingSetup) restoredImages.dosingSetup = await base64ToFile(parsed.images.dosingSetup, 'dosing.jpg');
       if (parsed.images.initialChemical) restoredImages.initialChemical = await base64ToFile(parsed.images.initialChemical, 'chem.jpg');
 
-      // Evidence
       if (parsed.images.evidencePhotos) {
         for (const p of parsed.images.evidencePhotos) {
           restoredImages.evidencePhotos.push({
@@ -309,7 +397,6 @@ const App: React.FC = () => {
         }
       }
 
-      // Tank Photos
       if (parsed.images.tankPhotos) {
         for (const t of parsed.images.tankPhotos) {
           restoredImages.tankPhotos.push({
@@ -325,13 +412,12 @@ const App: React.FC = () => {
 
     } catch (err) {
       console.error("Load failed", err);
-      alert("Failed to load project file. It may be corrupted.");
+      alert("Failed to load project file.");
     } finally {
       setIsGenerating(false);
-      if (fileInputRef.current) fileInputRef.current.value = ""; // Reset input
+      if (fileInputRef.current) fileInputRef.current.value = ""; 
     }
   };
-  // -----------------------------
 
   if (view === 'report') {
     return <ReportView data={data} images={images} onEdit={() => setView('form')} />;
@@ -340,7 +426,6 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900 pb-20">
       
-      {/* Hidden File Input for Loading */}
       <input 
         type="file" 
         ref={fileInputRef} 
@@ -357,40 +442,19 @@ const App: React.FC = () => {
             <h1 className="text-xl font-bold tracking-tight text-slate-900 hidden sm:block">Report Generator</h1>
           </div>
           <div className="flex items-center gap-2 sm:gap-4">
-            
-            {/* Save/Load Buttons */}
             <div className="flex gap-2 mr-2 border-r pr-4 border-slate-200">
-              <button 
-                onClick={handleSaveProject} 
-                disabled={isGenerating}
-                className="text-xs sm:text-sm font-medium text-slate-600 hover:text-[#0070c0] flex items-center gap-1"
-              >
+              <button onClick={handleSaveProject} disabled={isGenerating} className="text-xs sm:text-sm font-medium text-slate-600 hover:text-[#0070c0] flex items-center gap-1">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" /></svg>
                 Save
               </button>
-              <button 
-                onClick={handleLoadProjectClick}
-                disabled={isGenerating}
-                className="text-xs sm:text-sm font-medium text-slate-600 hover:text-[#0070c0] flex items-center gap-1"
-              >
+              <button onClick={handleLoadProjectClick} disabled={isGenerating} className="text-xs sm:text-sm font-medium text-slate-600 hover:text-[#0070c0] flex items-center gap-1">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
                 Load
               </button>
             </div>
-
             <div className="flex bg-slate-100 p-1 rounded-lg">
-              <button 
-                onClick={() => handleJobTypeChange('Pipework')}
-                className={`px-2 sm:px-3 py-1 text-xs sm:text-sm font-medium rounded-md transition-all ${data.jobType === 'Pipework' ? 'bg-white shadow text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
-              >
-                Pipework
-              </button>
-              <button 
-                onClick={() => handleJobTypeChange('Tank')}
-                className={`px-2 sm:px-3 py-1 text-xs sm:text-sm font-medium rounded-md transition-all ${data.jobType === 'Tank' ? 'bg-white shadow text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
-              >
-                Tank
-              </button>
+              <button onClick={() => handleJobTypeChange('Pipework')} className={`px-2 sm:px-3 py-1 text-xs sm:text-sm font-medium rounded-md transition-all ${data.jobType === 'Pipework' ? 'bg-white shadow text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}>Pipework</button>
+              <button onClick={() => handleJobTypeChange('Tank')} className={`px-2 sm:px-3 py-1 text-xs sm:text-sm font-medium rounded-md transition-all ${data.jobType === 'Tank' ? 'bg-white shadow text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}>Tank</button>
             </div>
           </div>
         </div>
@@ -398,7 +462,7 @@ const App: React.FC = () => {
 
       <main className="max-w-5xl mx-auto px-4 py-8 space-y-8">
 
-        {/* Section 0: Company Branding */}
+        {/* Branding */}
         <section className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
           <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex items-center justify-between">
             <h2 className="font-bold text-slate-800 flex items-center gap-2">
@@ -407,28 +471,13 @@ const App: React.FC = () => {
             </h2>
           </div>
           <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
-             <ImageUpload 
-                label="Company Square Logo" 
-                id="logo"
-                file={images.companyLogo} 
-                onFileChange={(f) => setImages(prev => ({ ...prev, companyLogo: f }))}
-              />
-              <ImageUpload 
-                label="Company Header Logo (Wide)" 
-                id="header"
-                file={images.companyHeader} 
-                onFileChange={(f) => setImages(prev => ({ ...prev, companyHeader: f }))}
-              />
-              <ImageUpload 
-                label="Accreditation Certificate" 
-                id="cert"
-                file={images.certificate} 
-                onFileChange={(f) => setImages(prev => ({ ...prev, certificate: f }))}
-              />
+             <ImageUpload label="Company Square Logo" id="logo" file={images.companyLogo} onFileChange={(f) => setImages(prev => ({ ...prev, companyLogo: f }))} />
+              <ImageUpload label="Company Header Logo (Wide)" id="header" file={images.companyHeader} onFileChange={(f) => setImages(prev => ({ ...prev, companyHeader: f }))} />
+              <ImageUpload label="Accreditation Certificate" id="cert" file={images.certificate} onFileChange={(f) => setImages(prev => ({ ...prev, certificate: f }))} />
           </div>
         </section>
         
-        {/* Section 1: Job Info */}
+        {/* Job Info */}
         <section className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
           <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex items-center justify-between">
             <h2 className="font-bold text-slate-800 flex items-center gap-2">
@@ -441,10 +490,24 @@ const App: React.FC = () => {
                <label className="text-xs font-bold text-slate-500 uppercase">Commissioned By (Person)</label>
                <input type="text" name="commissionedBy" value={data.commissionedBy} onChange={handleInputChange} className="w-full input-field border rounded p-2" placeholder="e.g. Scott Hartley" />
              </div>
+             
+             {/* Client Automated Dropdown */}
              <div className="space-y-1">
                <label className="text-xs font-bold text-slate-500 uppercase">Client Company</label>
-               <input type="text" name="clientName" value={data.clientName} onChange={handleInputChange} className="w-full input-field border rounded p-2" placeholder="e.g. ECS Yorkshire" />
+               <input 
+                list="client-options" 
+                type="text" 
+                name="clientName" 
+                value={data.clientName} 
+                onChange={handleInputChange} 
+                className="w-full input-field border rounded p-2" 
+                placeholder="Select or Type Client..." 
+               />
+               <datalist id="client-options">
+                 {CLIENT_LIST.map((client, i) => <option key={i} value={client} />)}
+               </datalist>
              </div>
+
              <div className="space-y-1">
                <label className="text-xs font-bold text-slate-500 uppercase">Site Name</label>
                <input type="text" name="siteName" value={data.siteName} onChange={handleInputChange} className="w-full input-field border rounded p-2" placeholder="e.g. Lidl - Tamebridge" />
@@ -464,45 +527,87 @@ const App: React.FC = () => {
           </div>
         </section>
 
-        {/* Section 2: Process Info */}
+        {/* Process Info - UPDATED with Calculator & pH Logic */}
         <section className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
           <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex items-center justify-between">
             <h2 className="font-bold text-slate-800 flex items-center gap-2">
               <span className="bg-blue-100 text-blue-700 w-6 h-6 rounded-full flex items-center justify-center text-xs">2</span>
-              Process Configuration
+              Process & Automation
             </h2>
           </div>
-          <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-             <div className="space-y-1">
-               <label className="text-xs font-bold text-slate-500 uppercase">Disinfectant Used</label>
-               <select name="disinfectant" value={data.disinfectant} onChange={handleInputChange} className="w-full input-field border rounded p-2 bg-white">
-                 <option value="Sodium Hypochlorite">Sodium Hypochlorite</option>
-                 <option value="Hydrogen Peroxide">Hydrogen Peroxide</option>
-                 <option value="Chlorine Dioxide">Chlorine Dioxide</option>
-               </select>
-             </div>
-             <div className="space-y-1">
-               <label className="text-xs font-bold text-slate-500 uppercase">Concentration Target</label>
-               <input type="text" name="concentrationTarget" value={data.concentrationTarget} onChange={handleInputChange} className="w-full input-field border rounded p-2" placeholder="e.g. 50 PPM" />
-             </div>
-             <div className="space-y-1">
-               <label className="text-xs font-bold text-slate-500 uppercase">Contact Time</label>
-               <input type="text" name="contactTime" value={data.contactTime} onChange={handleInputChange} className="w-full input-field border rounded p-2" placeholder="e.g. 1 Hour" />
-               {phWarning && (
-                 <p className="text-amber-600 text-xs mt-1 font-bold flex items-center gap-1">
-                   <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
-                   {phWarning}
-                 </p>
-               )}
-             </div>
-             <div className="space-y-1">
-               <label className="text-xs font-bold text-slate-500 uppercase">Injection Point Location</label>
-               <input type="text" name="injectionPoint" value={data.injectionPoint} onChange={handleInputChange} className="w-full input-field border rounded p-2" placeholder="e.g. Outside plant room / Toilet" />
-             </div>
+          <div className="p-6">
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-500 uppercase">Disinfectant Used</label>
+                <select name="disinfectant" value={data.disinfectant} onChange={handleChemicalChange} className="w-full input-field border rounded p-2 bg-white">
+                  <option value="Sodium Hypochlorite">Sodium Hypochlorite</option>
+                  <option value="Hydrogen Peroxide (Silver Stabilised)">Hydrogen Peroxide (Silver Stabilised)</option>
+                  <option value="Chlorine Dioxide">Chlorine Dioxide</option>
+                  <option value="Thermal Disinfection">Thermal Disinfection</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                 <label className="text-xs font-bold text-slate-500 uppercase">Injection Point Location</label>
+                 <input type="text" name="injectionPoint" value={data.injectionPoint} onChange={handleInputChange} className="w-full input-field border rounded p-2" placeholder="e.g. Outside plant room / Toilet" />
+              </div>
+            </div>
+
+            {/* Automation Area for Calculation */}
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 mb-6">
+               <h3 className="text-sm font-bold text-[#1a237e] mb-4 flex items-center gap-2">
+                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+                 Dosage Calculator (PD 855468)
+               </h3>
+               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-500 uppercase">System Volume (Litres)</label>
+                    <input type="number" name="systemVolume" value={data.systemVolume} onChange={handleInputChange} className="w-full border rounded p-2 border-blue-200" placeholder="e.g. 1000" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-500 uppercase">Chem Strength (%)</label>
+                    <input type="number" name="chemicalStrength" value={data.chemicalStrength} onChange={handleInputChange} className="w-full border rounded p-2 border-blue-200" placeholder="e.g. 14" />
+                  </div>
+                   <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-500 uppercase">Target PPM</label>
+                    <input type="number" name="concentrationTarget" value={data.concentrationTarget} onChange={handleInputChange} className="w-full border rounded p-2 border-blue-200" placeholder="e.g. 50" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-green-700 uppercase">Calculated Dosage</label>
+                    <input type="text" name="amountAdded" value={data.amountAdded} readOnly className="w-full border rounded p-2 bg-green-50 border-green-200 text-green-800 font-bold" />
+                  </div>
+               </div>
+               <p className="text-[10px] text-slate-400 mt-2">Formula: (Vol × PPM) / (Strength% × 10,000)</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+               <div className="space-y-1 relative">
+                <label className="text-xs font-bold text-slate-500 uppercase">Contact Time</label>
+                <input type="text" name="contactTime" value={data.contactTime} onChange={handleInputChange} className={`w-full input-field border rounded p-2 ${phWarning ? 'border-amber-400 bg-amber-50' : ''}`} placeholder="e.g. 1 Hour" />
+                {recommendedTime && (
+                   <button 
+                    onClick={() => setData(prev => ({ ...prev, contactTime: recommendedTime }))}
+                    className="absolute right-2 top-8 text-[10px] bg-amber-500 text-white px-2 py-0.5 rounded hover:bg-amber-600"
+                   >
+                     Apply {recommendedTime}
+                   </button>
+                )}
+                {phWarning && <p className="text-amber-600 text-xs mt-1 font-bold">{phWarning}</p>}
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-500 uppercase">Pre-Flush Duration</label>
+                <input type="text" name="preFlushDuration" value={data.preFlushDuration} onChange={handleInputChange} className="w-full input-field border rounded p-2" placeholder="e.g. 10 Mins" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-500 uppercase">Neutralising Agent</label>
+                <input type="text" name="neutralisingAgent" value={data.neutralisingAgent} onChange={handleInputChange} className="w-full input-field border rounded p-2" placeholder="e.g. Sodium Thiosulfate" />
+              </div>
+            </div>
+
           </div>
         </section>
 
-        {/* Section 2.5: Tank Details (Conditional) */}
+        {/* Tank Details */}
         {data.jobType === 'Tank' && (
           <section className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
              <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex items-center justify-between">
@@ -517,41 +622,18 @@ const App: React.FC = () => {
                 <div key={tank.id} className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 border border-slate-200 rounded-lg relative bg-slate-50/50">
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-500 uppercase">Description / Name</label>
-                    <input 
-                      type="text" 
-                      value={tank.description} 
-                      onChange={(e) => handleUpdateTank(tank.id, 'description', e.target.value)} 
-                      className="w-full input-field border rounded p-2" 
-                      placeholder="e.g. Main CWST" 
-                    />
+                    <input type="text" value={tank.description} onChange={(e) => handleUpdateTank(tank.id, 'description', e.target.value)} className="w-full input-field border rounded p-2" placeholder="e.g. Main CWST" />
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-500 uppercase">Location</label>
-                    <input 
-                      type="text" 
-                      value={tank.location} 
-                      onChange={(e) => handleUpdateTank(tank.id, 'location', e.target.value)} 
-                      className="w-full input-field border rounded p-2" 
-                      placeholder="e.g. Plant Room" 
-                    />
+                    <input type="text" value={tank.location} onChange={(e) => handleUpdateTank(tank.id, 'location', e.target.value)} className="w-full input-field border rounded p-2" placeholder="e.g. Plant Room" />
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-500 uppercase">Capacity</label>
-                    <input 
-                      type="text" 
-                      value={tank.capacity} 
-                      onChange={(e) => handleUpdateTank(tank.id, 'capacity', e.target.value)} 
-                      className="w-full input-field border rounded p-2" 
-                      placeholder="e.g. 1000 Litres" 
-                    />
+                    <input type="text" value={tank.capacity} onChange={(e) => handleUpdateTank(tank.id, 'capacity', e.target.value)} className="w-full input-field border rounded p-2" placeholder="e.g. 1000 Litres" />
                   </div>
                   {data.tanks.length > 1 && (
-                    <button 
-                      onClick={() => handleRemoveTank(tank.id)} 
-                      className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center shadow-sm hover:bg-red-600 text-xs"
-                    >
-                      ×
-                    </button>
+                    <button onClick={() => handleRemoveTank(tank.id)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center shadow-sm hover:bg-red-600 text-xs">×</button>
                   )}
                   <div className="absolute top-2 right-2 text-xs font-bold text-slate-300 pointer-events-none">#{index + 1}</div>
                 </div>
@@ -560,7 +642,7 @@ const App: React.FC = () => {
           </section>
         )}
 
-        {/* Section 3: Test Points */}
+        {/* Test Points */}
         <section className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
           <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex items-center justify-between">
             <h2 className="font-bold text-slate-800 flex items-center gap-2">
@@ -569,27 +651,18 @@ const App: React.FC = () => {
             </h2>
             <button onClick={handleAddTestPoint} className="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">+ Add Point</button>
           </div>
-          
           <div className="p-6 overflow-x-auto">
              <div className="grid grid-cols-2 gap-4 mb-6 p-4 bg-slate-50 rounded border border-slate-200">
                <div>
                  <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Mains pH Level</label>
-                 <input 
-                  type="number" 
-                  step="0.1"
-                  name="incomingMainsPh" 
-                  value={data.incomingMainsPh} 
-                  onChange={handleInputChange} 
-                  className={`border rounded p-1 w-24 ${phWarning ? 'border-amber-500 bg-amber-50 text-amber-900' : ''}`} 
-                 />
-                 {phWarning && <span className="text-xs text-amber-600 font-bold ml-2">High pH</span>}
+                 <input type="number" step="0.1" name="incomingMainsPh" value={data.incomingMainsPh} onChange={handleInputChange} className={`border rounded p-1 w-24 ${phWarning ? 'border-amber-500 bg-amber-50 text-amber-900' : ''}`} />
+                 {phWarning && <span className="text-xs text-amber-600 font-bold ml-2">Check Contact Time!</span>}
                </div>
                <div>
                  <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Final Residual Cl2</label>
                  <input type="text" name="residualChlorine" value={data.residualChlorine} onChange={handleInputChange} className="border rounded p-1 w-24" />
                </div>
              </div>
-
              <table className="w-full min-w-[600px] text-sm text-left">
                <thead>
                  <tr className="border-b-2 border-slate-200 text-xs text-slate-500 uppercase">
@@ -604,52 +677,29 @@ const App: React.FC = () => {
                  {data.testPoints.map((tp) => (
                    <tr key={tp.id} className="border-b border-slate-100 last:border-0 group hover:bg-slate-50">
                      <td className="py-2 pr-2">
-                       <input 
-                        type="text" 
-                        value={tp.location} 
-                        onChange={(e) => handleUpdateTestPoint(tp.id, 'location', e.target.value)}
-                        placeholder="e.g. Staff Kitchen Tap"
-                        className="w-full bg-transparent border-b border-transparent focus:border-blue-500 focus:outline-none py-1"
-                       />
+                       <input type="text" value={tp.location} onChange={(e) => handleUpdateTestPoint(tp.id, 'location', e.target.value)} placeholder="e.g. Staff Kitchen Tap" className="w-full bg-transparent border-b border-transparent focus:border-blue-500 focus:outline-none py-1" />
                      </td>
                      <td className="py-2 pr-2">
-                       <input 
-                        type="text" 
-                        value={tp.initialPpm} 
-                        onChange={(e) => handleUpdateTestPoint(tp.id, 'initialPpm', e.target.value)}
-                        className="w-full bg-transparent border-b border-transparent focus:border-blue-500 focus:outline-none py-1"
-                       />
+                       <input type="text" value={tp.initialPpm} onChange={(e) => handleUpdateTestPoint(tp.id, 'initialPpm', e.target.value)} className="w-full bg-transparent border-b border-transparent focus:border-blue-500 focus:outline-none py-1" />
                      </td>
                      <td className="py-2 pr-2">
-                       <input 
-                        type="text" 
-                        value={tp.midPpm} 
-                        onChange={(e) => handleUpdateTestPoint(tp.id, 'midPpm', e.target.value)}
-                        className="w-full bg-transparent border-b border-transparent focus:border-blue-500 focus:outline-none py-1"
-                       />
+                       <input type="text" value={tp.midPpm} onChange={(e) => handleUpdateTestPoint(tp.id, 'midPpm', e.target.value)} className="w-full bg-transparent border-b border-transparent focus:border-blue-500 focus:outline-none py-1" />
                      </td>
                      <td className="py-2 pr-2">
-                       <input 
-                        type="text" 
-                        value={tp.finalPpm} 
-                        onChange={(e) => handleUpdateTestPoint(tp.id, 'finalPpm', e.target.value)}
-                        className="w-full bg-transparent border-b border-transparent focus:border-blue-500 focus:outline-none py-1"
-                       />
+                       <input type="text" value={tp.finalPpm} onChange={(e) => handleUpdateTestPoint(tp.id, 'finalPpm', e.target.value)} className="w-full bg-transparent border-b border-transparent focus:border-blue-500 focus:outline-none py-1" />
                      </td>
                      <td className="py-2 text-right">
                        <button onClick={() => handleRemoveTestPoint(tp.id)} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity">×</button>
                      </td>
                    </tr>
                  ))}
-                 {data.testPoints.length === 0 && (
-                   <tr><td colSpan={5} className="text-center py-4 text-slate-400 italic">No test points added yet.</td></tr>
-                 )}
+                 {data.testPoints.length === 0 && <tr><td colSpan={5} className="text-center py-4 text-slate-400 italic">No test points added yet.</td></tr>}
                </tbody>
              </table>
           </div>
         </section>
 
-        {/* Section 4: Photos */}
+        {/* Photos */}
         <section className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
           <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex items-center justify-between">
             <h2 className="font-bold text-slate-800 flex items-center gap-2">
@@ -659,54 +709,23 @@ const App: React.FC = () => {
           </div>
           <div className="p-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
-              <ImageUpload 
-                label="Front Cover Photo" 
-                id="cover"
-                file={images.coverPhoto} 
-                onFileChange={(f) => setImages(prev => ({ ...prev, coverPhoto: f }))}
-              />
-              <ImageUpload 
-                label="Lab Results Certificate" 
-                id="lab"
-                file={images.labResults} 
-                onFileChange={(f) => setImages(prev => ({ ...prev, labResults: f }))}
-              />
-              <ImageUpload 
-                label="Initial Chemical Level" 
-                id="initialChem"
-                file={images.initialChemical} 
-                onFileChange={(f) => setImages(prev => ({ ...prev, initialChemical: f }))}
-              />
+              <ImageUpload label="Front Cover Photo" id="cover" file={images.coverPhoto} onFileChange={(f) => setImages(prev => ({ ...prev, coverPhoto: f }))} />
+              
+              {/* Optional Lab Results */}
+              <ImageUpload label="Lab Results (Optional)" id="lab" file={images.labResults} onFileChange={(f) => setImages(prev => ({ ...prev, labResults: f }))} />
+              
+              <ImageUpload label="Initial Chemical Level" id="initialChem" file={images.initialChemical} onFileChange={(f) => setImages(prev => ({ ...prev, initialChemical: f }))} />
 
-              {/* Conditional Photos based on Job Type */}
               {data.jobType === 'Pipework' && (
-                <ImageUpload 
-                  label="Dosing Equipment Setup" 
-                  id="dosingSetup"
-                  file={images.dosingSetup} 
-                  onFileChange={(f) => setImages(prev => ({ ...prev, dosingSetup: f }))}
-                />
+                <ImageUpload label="Dosing Equipment Setup" id="dosingSetup" file={images.dosingSetup} onFileChange={(f) => setImages(prev => ({ ...prev, dosingSetup: f }))} />
               )}
 
-              {/* Dynamic Tank Photos */}
               {data.jobType === 'Tank' && data.tanks.map((tank, idx) => {
                  const photoSet = images.tankPhotos.find(tp => tp.tankId === tank.id);
                  return (
                     <React.Fragment key={tank.id}>
-                      <ImageUpload 
-                        label={`${tank.description || `Tank ${idx+1}`} - Before`}
-                        id={`tank_before_${tank.id}`}
-                        file={photoSet?.before} 
-                        onFileChange={(f) => handleTankPhotoUpdate(tank.id, 'before', f)}
-                        className="border-blue-100 bg-blue-50/50 p-2 rounded"
-                      />
-                      <ImageUpload 
-                        label={`${tank.description || `Tank ${idx+1}`} - After`}
-                        id={`tank_after_${tank.id}`}
-                        file={photoSet?.after} 
-                        onFileChange={(f) => handleTankPhotoUpdate(tank.id, 'after', f)}
-                        className="border-blue-100 bg-blue-50/50 p-2 rounded"
-                      />
+                      <ImageUpload label={`${tank.description || `Tank ${idx+1}`} - Before`} id={`tank_before_${tank.id}`} file={photoSet?.before} onFileChange={(f) => handleTankPhotoUpdate(tank.id, 'before', f)} className="border-blue-100 bg-blue-50/50 p-2 rounded" />
+                      <ImageUpload label={`${tank.description || `Tank ${idx+1}`} - After`} id={`tank_after_${tank.id}`} file={photoSet?.after} onFileChange={(f) => handleTankPhotoUpdate(tank.id, 'after', f)} className="border-blue-100 bg-blue-50/50 p-2 rounded" />
                     </React.Fragment>
                  );
               })}
@@ -724,20 +743,8 @@ const App: React.FC = () => {
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 pt-6 border-t border-slate-100">
                 {images.evidencePhotos.map((photo, idx) => (
                   <div key={photo.id} className="relative group">
-                     <ImageUpload 
-                        label={`Extra Photo ${idx + 1}`}
-                        id={photo.id}
-                        file={photo.file}
-                        caption={photo.caption}
-                        onFileChange={() => {}} // Read-only file, use remove button
-                        onCaptionChange={(c) => handleUpdatePhotoCaption(photo.id, c)}
-                     />
-                     <button 
-                      onClick={() => handleRemovePhoto(photo.id)}
-                      className="absolute top-8 right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs shadow-md opacity-0 group-hover:opacity-100 transition-opacity"
-                     >
-                       ×
-                     </button>
+                     <ImageUpload label={`Extra Photo ${idx + 1}`} id={photo.id} file={photo.file} caption={photo.caption} onFileChange={() => {}} onCaptionChange={(c) => handleUpdatePhotoCaption(photo.id, c)} />
+                     <button onClick={() => handleRemovePhoto(photo.id)} className="absolute top-8 right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs shadow-md opacity-0 group-hover:opacity-100 transition-opacity">×</button>
                   </div>
                 ))}
               </div>
@@ -751,20 +758,8 @@ const App: React.FC = () => {
               <div className="text-sm text-slate-500 hidden sm:block">
                  {data.jobType} Mode • {data.testPoints.length} test points • {images.evidencePhotos.length} extra photos
               </div>
-              <button
-                onClick={handleGenerate}
-                disabled={isGenerating || !data.clientName}
-                className={`px-8 py-3 rounded-lg font-bold text-white shadow-md transition-all flex items-center gap-2
-                  ${isGenerating || !data.clientName
-                    ? 'bg-slate-400 cursor-not-allowed' 
-                    : 'bg-[#0070c0] hover:bg-blue-700 transform hover:-translate-y-0.5'
-                  }`}
-              >
-                {isGenerating ? (
-                  <>Processing...</>
-                ) : (
-                  <>Generate Report</>
-                )}
+              <button onClick={handleGenerate} disabled={isGenerating || !data.clientName} className={`px-8 py-3 rounded-lg font-bold text-white shadow-md transition-all flex items-center gap-2 ${isGenerating || !data.clientName ? 'bg-slate-400 cursor-not-allowed' : 'bg-[#0070c0] hover:bg-blue-700 transform hover:-translate-y-0.5'}`}>
+                {isGenerating ? <>Processing...</> : <>Generate Report</>}
               </button>
            </div>
         </div>

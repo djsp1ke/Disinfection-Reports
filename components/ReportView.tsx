@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { ReportData, ReportImages } from '../types';
 
@@ -7,7 +8,7 @@ interface ReportViewProps {
   onEdit: () => void;
 }
 
-// Stable Image Component - Converts File to Base64 Data URL for permanent embedding
+// Stable Image Component
 const FileImage = ({ file, className, alt, fallbackSrc }: { file?: File, className?: string, alt?: string, fallbackSrc?: string }) => {
   const [src, setSrc] = React.useState<string | null>(null);
 
@@ -62,7 +63,6 @@ const ReportView: React.FC<ReportViewProps> = ({ data, images, onEdit }) => {
     return `${day}${suffix} ${date.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}`;
   };
 
-  // Branding Components with Logic: Uploaded File -> Fallback File (hardcoded) -> Nothing
   const LogoImage = () => <FileImage file={images.companyLogo} fallbackSrc="wcs-logo.png" className="w-48 mb-8 object-contain" alt="WCS Logo" />;
   const HeaderImage = () => <FileImage file={images.companyHeader} fallbackSrc="wcs-header.png" className="h-16 object-contain" alt="WCS Header" />;
   const CertImage = () => <FileImage file={images.certificate} fallbackSrc="certificate.jpg" className="max-h-[800px] max-w-full object-contain border border-slate-200 shadow-sm" alt="Certificate" />;
@@ -74,16 +74,11 @@ const ReportView: React.FC<ReportViewProps> = ({ data, images, onEdit }) => {
     </div>
   );
 
-  // Helper to chunk photos for pagination
   const getPhotoPages = () => {
     const allPhotos: { file: File, caption: string }[] = [];
-
-    // 1. Specific Photos first
     if (data.jobType === 'Pipework' && images.dosingSetup) {
       allPhotos.push({ file: images.dosingSetup, caption: 'View of dosing pump set up' });
     }
-    
-    // Tank Photos (Dynamic Loop)
     if (data.jobType === 'Tank') {
        data.tanks.forEach((tank, idx) => {
           const photoSet = images.tankPhotos.find(tp => tp.tankId === tank.id);
@@ -95,17 +90,12 @@ const ReportView: React.FC<ReportViewProps> = ({ data, images, onEdit }) => {
           }
        });
     }
-
     if (images.initialChemical) {
       allPhotos.push({ file: images.initialChemical, caption: 'Initial Chemical Level within dosing equipment' });
     }
-
-    // 2. Evidence Photos
     images.evidencePhotos.forEach((photo, idx) => {
       allPhotos.push({ file: photo.file, caption: photo.caption || `Evidence Photo ${idx + 1}` });
     });
-
-    // Chunk into groups of 4
     const pages = [];
     for (let i = 0; i < allPhotos.length; i += 4) {
       pages.push(allPhotos.slice(i, i + 4));
@@ -114,19 +104,12 @@ const ReportView: React.FC<ReportViewProps> = ({ data, images, onEdit }) => {
   };
 
   const photoPages = getPhotoPages();
-  
-  // Calculate total pages dynamically
-  let currentPage = 4; // We start counting after Scope (Page 4)
+  let currentPage = 4;
 
   const handleDownloadHtml = () => {
-    // 1. Clone the document
     const clone = document.documentElement.cloneNode(true) as HTMLElement;
-    
-    // 2. Remove the "No Print" action bar from the clone
     const actionBar = clone.querySelector('.no-print');
     if (actionBar) actionBar.remove();
-
-    // 3. Serialize
     const htmlContent = clone.outerHTML;
     const blob = new Blob([htmlContent], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
@@ -160,7 +143,6 @@ const ReportView: React.FC<ReportViewProps> = ({ data, images, onEdit }) => {
 
       {/* --- PAGE 1: COVER --- */}
       <Page>
-        {/* Border Container: 8mm Inset */}
         <div className="absolute top-[8mm] bottom-[8mm] left-[8mm] right-[8mm] border-[3mm] border-[#0070c0] pointer-events-none"></div>
 
         <div className="h-full flex flex-col justify-between">
@@ -301,7 +283,7 @@ const ReportView: React.FC<ReportViewProps> = ({ data, images, onEdit }) => {
 
                   <div className="py-2">
                     <p className="font-bold text-lg text-[#1a237e] mb-1">Disinfectant Used:</p>
-                    <p className="text-xl">{data.disinfectant} at a concentration of {data.concentrationTarget}</p>
+                    <p className="text-xl">{data.disinfectant} at {data.concentrationTarget} ({data.amountAdded || 'Unknown Vol'} added)</p>
                     <p className="text-xl">for a period of {data.contactTime}</p>
                   </div>
                   
@@ -321,9 +303,14 @@ const ReportView: React.FC<ReportViewProps> = ({ data, images, onEdit }) => {
         <PageHeader showLogo={true} />
         <h2 className="text-3xl font-bold text-center mb-8">4.0 Disinfection Level Records</h2>
         
-        <div className="mb-8 text-sm">
-           <p><strong>Date and Time:</strong> {formatDate(data.serviceDate)}</p>
-           <p><strong>Product Used:</strong> {data.disinfectant} at a concentration of {data.concentrationTarget} for a period of {data.contactTime}</p>
+        <div className="mb-6 text-sm grid grid-cols-2 gap-4 bg-slate-50 p-4 border border-slate-200">
+           <div><span className="font-bold">Date and Time:</span> {formatDate(data.serviceDate)}</div>
+           <div><span className="font-bold">Disinfectant:</span> {data.disinfectant}</div>
+           <div><span className="font-bold">Concentration Target:</span> {data.concentrationTarget}</div>
+           <div><span className="font-bold">Amount Added:</span> {data.amountAdded || 'N/A'}</div>
+           <div><span className="font-bold">Contact Time:</span> {data.contactTime}</div>
+           <div><span className="font-bold">Pre-Flush Duration:</span> {data.preFlushDuration || 'N/A'}</div>
+           <div><span className="font-bold">Neutralising Agent:</span> {data.neutralisingAgent || 'None'}</div>
         </div>
 
         <table className="w-full text-xs text-left mb-8">
@@ -387,11 +374,17 @@ const ReportView: React.FC<ReportViewProps> = ({ data, images, onEdit }) => {
          <p className="mb-4">Sample analysis was taken after 48 hours upon completion of the works and delivered to a UKAS accredited lab.</p>
          <p className="mb-8">The analysis taken was for TVC, E.Coli, Total Coliforms, Pseudomonas aeruginosa.</p>
          
-         <div className="border border-slate-300 h-[600px] flex items-center justify-center bg-slate-50">
+         <div className="border border-slate-300 h-[600px] flex items-center justify-center bg-slate-50 overflow-hidden relative">
             {images.labResults ? (
-               <FileImage file={images.labResults} className="max-h-full max-w-full object-contain" />
+               <FileImage file={images.labResults} className="w-full h-full object-contain" />
             ) : (
-              <p className="text-slate-400 italic">Certificate of Analysis to be inserted here</p>
+              <div className="text-center p-8 border-2 border-dashed border-slate-300 rounded-lg">
+                <svg className="w-16 h-16 text-slate-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+                </svg>
+                <h3 className="text-xl font-bold text-slate-400 uppercase tracking-widest">Results Pending</h3>
+                <p className="text-slate-400 mt-2">Certificate of Analysis to be inserted upon receipt.</p>
+              </div>
             )}
          </div>
       </Page>
