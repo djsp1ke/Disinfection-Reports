@@ -1,0 +1,7 @@
+{
+  "name": "PureTank Report Gen",
+  "description": "Professional water tank disinfection report generator powered by Gemini. Input job details and photos to automatically create comprehensive PDF-ready reports.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
