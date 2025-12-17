@@ -204,6 +204,7 @@ const ReportView: React.FC<ReportViewProps> = ({ data, images, onEdit }) => {
         isOpen={showEmailDialog}
         onClose={() => setShowEmailDialog(false)}
         data={data}
+        images={images}
       />
 
       {/* --- PAGE 1: COVER --- */}
@@ -222,8 +223,8 @@ const ReportView: React.FC<ReportViewProps> = ({ data, images, onEdit }) => {
                 <h2 className="text-2xl font-bold text-center mb-8">{data.clientName}</h2>
                 
                 {images.coverPhoto && (
-                    <div className="w-64 h-48 bg-slate-100 mb-8 border border-slate-200 shadow-sm flex items-center justify-center overflow-hidden">
-                      <FileImage file={images.coverPhoto} className="w-full h-full object-cover" />
+                    <div className="w-72 h-56 bg-slate-100 mb-8 border border-slate-200 shadow-sm flex items-center justify-center overflow-hidden">
+                      <FileImage file={images.coverPhoto} className="max-w-full max-h-full object-contain" />
                     </div>
                 )}
                 

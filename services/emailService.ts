@@ -1,5 +1,5 @@
 
-import { ReportData } from '../types';
+import { ReportData, ReportImages } from '../types';
 
 // Email configuration
 export interface EmailConfig {
@@ -136,6 +136,176 @@ export const sendViaEmailProvider = async (
     success: false,
     message: 'Email provider not configured. Use mailto or Web Share instead.',
   };
+};
+
+// Generate Word document blob for email attachment
+export const generateWordBlobForEmail = async (data: ReportData, images: ReportImages): Promise<Blob> => {
+  const {
+    Document,
+    Packer,
+    Paragraph,
+    TextRun,
+    HeadingLevel,
+    Table,
+    TableRow,
+    TableCell,
+    WidthType,
+    AlignmentType,
+    ImageRun,
+    SectionType,
+    BorderStyle
+  } = await import('docx');
+
+  const formatDate = (dateString: string) => {
+    if (!dateString) return 'N/A';
+    const date = new Date(dateString);
+    const day = date.getDate();
+    const suffix = ["th", "st", "nd", "rd"][((day % 100) - 20) % 10] || ["th", "st", "nd", "rd"][day % 100] || "th";
+    return `${day}${suffix} ${date.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}`;
+  };
+
+  // Helper to convert File to base64
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => {
+        const result = reader.result as string;
+        const base64 = result.split(',')[1];
+        resolve(base64);
+      };
+      reader.onerror = (error) => reject(error);
+    });
+  };
+
+  // Helper to create image run
+  const createImageRun = async (file: File | undefined, width: number, height: number): Promise<ImageRun | null> => {
+    if (!file) return null;
+    try {
+      const base64 = await fileToBase64(file);
+      return new ImageRun({
+        data: Uint8Array.from(atob(base64), c => c.charCodeAt(0)),
+        transformation: { width, height },
+        type: 'jpg',
+      });
+    } catch {
+      return null;
+    }
+  };
+
+  // Build a simplified document for email
+  const sections: any[] = [];
+
+  // Cover page
+  const coverChildren: any[] = [
+    new Paragraph({ text: '', spacing: { after: 400 } }),
+    new Paragraph({
+      children: [new TextRun({ text: 'Water Compliance Services Ltd', bold: true, size: 36, color: '0070c0' })],
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 400 },
+    }),
+    new Paragraph({
+      children: [new TextRun({ text: data.jobType === 'Tank' ? 'Cold Water Storage Tank' : 'Pipework Disinfection', bold: true, size: 48, color: '1a237e' })],
+      alignment: AlignmentType.CENTER,
+    }),
+    new Paragraph({
+      children: [new TextRun({ text: 'Post Works Report', bold: true, size: 48, color: '1a237e' })],
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 600 },
+    }),
+    new Paragraph({
+      children: [new TextRun({ text: data.clientName, bold: true, size: 32 })],
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 300 },
+    }),
+    new Paragraph({
+      children: [new TextRun({ text: data.siteName, bold: true, size: 28 })],
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 200 },
+    }),
+    new Paragraph({
+      children: [new TextRun({ text: data.siteAddress, size: 24 })],
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 300 },
+    }),
+    new Paragraph({
+      children: [new TextRun({ text: formatDate(data.serviceDate), size: 26, bold: true })],
+      alignment: AlignmentType.CENTER,
+    }),
+  ];
+
+  sections.push({ properties: { type: SectionType.NEXT_PAGE }, children: coverChildren });
+
+  // Certificate page
+  sections.push({
+    properties: { type: SectionType.NEXT_PAGE },
+    children: [
+      new Paragraph({ text: 'Certificate of Disinfection', heading: HeadingLevel.HEADING_1, spacing: { after: 400 } }),
+      new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        rows: [
+          ['Site Name', data.siteName],
+          ['Site Address', data.siteAddress],
+          ['Service Date', formatDate(data.serviceDate)],
+          ['Client', data.clientName],
+          ['Technician', data.technicianName],
+          ['Disinfectant', `${data.disinfectant} at ${data.concentrationTarget} PPM`],
+          ['Contact Time', data.contactTime],
+        ].map(([label, value]) => new TableRow({
+          children: [
+            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: label, bold: true })] })], borders: { top: { style: BorderStyle.SINGLE }, bottom: { style: BorderStyle.SINGLE }, left: { style: BorderStyle.SINGLE }, right: { style: BorderStyle.SINGLE } } }),
+            new TableCell({ children: [new Paragraph({ text: value })], borders: { top: { style: BorderStyle.SINGLE }, bottom: { style: BorderStyle.SINGLE }, left: { style: BorderStyle.SINGLE }, right: { style: BorderStyle.SINGLE } } }),
+          ],
+        })),
+      }),
+    ],
+  });
+
+  // Test points page
+  if (data.testPoints.length > 0) {
+    sections.push({
+      properties: { type: SectionType.NEXT_PAGE },
+      children: [
+        new Paragraph({ text: 'Disinfection Level Records', heading: HeadingLevel.HEADING_1, spacing: { after: 400 } }),
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: [
+            new TableRow({
+              children: ['Location', 'Initial PPM', '30 Min PPM', '1 Hour PPM'].map(h => new TableCell({
+                children: [new Paragraph({ children: [new TextRun({ text: h, bold: true })] })],
+                shading: { fill: 'e0e0e0' },
+                borders: { top: { style: BorderStyle.SINGLE }, bottom: { style: BorderStyle.SINGLE }, left: { style: BorderStyle.SINGLE }, right: { style: BorderStyle.SINGLE } },
+              })),
+            }),
+            ...data.testPoints.map(tp => new TableRow({
+              children: [tp.location, tp.initialPpm, tp.midPpm, tp.finalPpm].map(v => new TableCell({
+                children: [new Paragraph({ text: v })],
+                borders: { top: { style: BorderStyle.SINGLE }, bottom: { style: BorderStyle.SINGLE }, left: { style: BorderStyle.SINGLE }, right: { style: BorderStyle.SINGLE } },
+              })),
+            })),
+          ],
+        }),
+      ],
+    });
+  }
+
+  const doc = new Document({ sections });
+  return await Packer.toBlob(doc);
+};
+
+// Download Word document for manual email attachment
+export const downloadWordForEmail = async (data: ReportData, images: ReportImages): Promise<string> => {
+  const blob = await generateWordBlobForEmail(data, images);
+  const url = URL.createObjectURL(blob);
+  const filename = `Report_${data.siteName.replace(/\s+/g, '_')}_${data.serviceDate}.docx`;
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+  return filename;
 };
 
 // Generate HTML report for email attachment
