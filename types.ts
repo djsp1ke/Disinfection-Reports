@@ -73,9 +73,10 @@ export interface ReportData {
 
 export interface ReportImages {
   // Branding (Optional Uploads)
-  companyLogo?: File;     
-  companyHeader?: File;   
-  certificate?: File;     
+  companyLogo?: File;
+  companyHeader?: File;
+  certificate?: File;
+  coverFooter?: File;     // Footer image for cover page
 
   coverPhoto?: File;
   labResults?: File;

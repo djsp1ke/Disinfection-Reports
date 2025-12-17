@@ -1,6 +1,8 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import { ReportData, ReportImages } from '../types';
+import { exportToWord, exportToExcel } from '../services/exportService';
+import EmailDialog from './EmailDialog';
 
 interface ReportViewProps {
   data: ReportData;
@@ -54,7 +56,33 @@ const Page: React.FC<PageProps> = ({ children, pageNum, className = '' }) => (
 );
 
 const ReportView: React.FC<ReportViewProps> = ({ data, images, onEdit }) => {
-  
+  const [isExporting, setIsExporting] = useState(false);
+  const [showEmailDialog, setShowEmailDialog] = useState(false);
+
+  const handleExportWord = async () => {
+    setIsExporting(true);
+    try {
+      await exportToWord(data, images);
+    } catch (error) {
+      console.error('Word export failed:', error);
+      alert('Failed to export Word document');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleExportExcel = async () => {
+    setIsExporting(true);
+    try {
+      await exportToExcel(data);
+    } catch (error) {
+      console.error('Excel export failed:', error);
+      alert('Failed to export Excel file');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const formatDate = (dateString: string) => {
     if (!dateString) return 'N/A';
     const date = new Date(dateString);
@@ -65,6 +93,7 @@ const ReportView: React.FC<ReportViewProps> = ({ data, images, onEdit }) => {
 
   const LogoImage = () => <FileImage file={images.companyLogo} fallbackSrc="wcs-logo.png" className="w-48 mb-8 object-contain" alt="WCS Logo" />;
   const HeaderImage = () => <FileImage file={images.companyHeader} fallbackSrc="wcs-header.png" className="h-16 object-contain" alt="WCS Header" />;
+  const FooterImage = () => <FileImage file={images.coverFooter} className="max-h-24 w-full object-contain" alt="Cover Footer" />;
   const CertImage = () => <FileImage file={images.certificate} fallbackSrc="certificate.jpg" className="max-h-[800px] max-w-full object-contain border border-slate-200 shadow-sm" alt="Certificate" />;
 
   const PageHeader = ({ title, showLogo = true }: { title?: string, showLogo?: boolean }) => (
@@ -127,19 +156,55 @@ const ReportView: React.FC<ReportViewProps> = ({ data, images, onEdit }) => {
       {/* --- Print Action Bar --- */}
       <div className="sticky top-4 z-50 flex justify-between items-center bg-white/90 backdrop-blur-md p-4 shadow-lg rounded-xl mb-8 border border-slate-200 print:hidden w-full max-w-4xl mx-auto no-print">
         <h2 className="text-lg font-bold text-slate-800">Report Preview</h2>
-        <div className="flex gap-3">
-          <button onClick={onEdit} className="px-4 py-2 text-sm font-medium text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200">
+        <div className="flex gap-2 flex-wrap justify-end">
+          <button onClick={onEdit} className="px-3 py-2 text-sm font-medium text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200">
             Edit Report
           </button>
-          <button onClick={handleDownloadHtml} className="px-4 py-2 text-sm font-medium text-blue-700 bg-blue-100 rounded-lg hover:bg-blue-200 border border-blue-200">
-            Download Source
+          <button onClick={handleDownloadHtml} className="px-3 py-2 text-sm font-medium text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200">
+            HTML
           </button>
-          <button onClick={() => window.print()} className="px-4 py-2 text-sm font-medium text-white bg-[#0070c0] rounded-lg hover:bg-blue-700 shadow-sm flex items-center gap-2">
+          <button
+            onClick={handleExportWord}
+            disabled={isExporting}
+            className="px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 border border-blue-200 flex items-center gap-1 disabled:opacity-50"
+          >
+            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zm-1 2l5 5h-5V4zM8.5 18h-.8l-1.2-4.6-1.2 4.6h-.8l-1.5-6h1l1 4.4 1.2-4.4h.8l1.2 4.4 1-4.4h1l-1.7 6z"/>
+            </svg>
+            Word
+          </button>
+          <button
+            onClick={handleExportExcel}
+            disabled={isExporting}
+            className="px-3 py-2 text-sm font-medium text-green-700 bg-green-50 rounded-lg hover:bg-green-100 border border-green-200 flex items-center gap-1 disabled:opacity-50"
+          >
+            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zm-1 2l5 5h-5V4zM9.5 11.5l1.5 2.5-1.5 2.5h1.2l1-1.7 1 1.7h1.2l-1.5-2.5 1.5-2.5h-1.2l-1 1.7-1-1.7H9.5z"/>
+            </svg>
+            Excel
+          </button>
+          <button
+            onClick={() => setShowEmailDialog(true)}
+            className="px-3 py-2 text-sm font-medium text-purple-700 bg-purple-50 rounded-lg hover:bg-purple-100 border border-purple-200 flex items-center gap-1"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+            </svg>
+            Email
+          </button>
+          <button onClick={() => window.print()} className="px-3 py-2 text-sm font-medium text-white bg-[#0070c0] rounded-lg hover:bg-blue-700 shadow-sm flex items-center gap-1">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
-            Print to PDF
+            PDF
           </button>
         </div>
       </div>
+
+      {/* Email Dialog */}
+      <EmailDialog
+        isOpen={showEmailDialog}
+        onClose={() => setShowEmailDialog(false)}
+        data={data}
+      />
 
       {/* --- PAGE 1: COVER --- */}
       <Page>
@@ -167,10 +232,16 @@ const ReportView: React.FC<ReportViewProps> = ({ data, images, onEdit }) => {
             </div>
             </div>
             
-            <div className="flex justify-center gap-4 pb-8 grayscale opacity-70">
-            <div className="h-12 w-24 border border-slate-400 flex items-center justify-center text-[10px] text-center font-bold text-slate-500">Legionella Control<br/>Association</div>
-            <div className="h-12 w-12 border border-slate-400 rounded-full flex items-center justify-center text-[10px] font-bold text-slate-500">Water<br/>Safe</div>
-            <div className="h-12 w-32 border border-slate-400 flex items-center justify-center text-[10px] font-bold text-slate-500">Constructionline</div>
+            <div className="pb-4">
+              {images.coverFooter ? (
+                <FooterImage />
+              ) : (
+                <div className="flex justify-center gap-4 grayscale opacity-70">
+                  <div className="h-12 w-24 border border-slate-400 flex items-center justify-center text-[10px] text-center font-bold text-slate-500">Legionella Control<br/>Association</div>
+                  <div className="h-12 w-12 border border-slate-400 rounded-full flex items-center justify-center text-[10px] font-bold text-slate-500">Water<br/>Safe</div>
+                  <div className="h-12 w-32 border border-slate-400 flex items-center justify-center text-[10px] font-bold text-slate-500">Constructionline</div>
+                </div>
+              )}
             </div>
         </div>
       </Page>
