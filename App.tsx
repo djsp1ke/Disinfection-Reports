@@ -6,12 +6,22 @@ import LoadingOverlay from './components/LoadingOverlay';
 import OfflineIndicator from './components/OfflineIndicator';
 import ProjectsList from './components/ProjectsList';
 import ShareDialog from './components/ShareDialog';
+import SortableTable, { Column } from './components/SortableTable';
+import AssetAnalysisGraphs from './components/AssetAnalysisGraphs';
+import MonthlyJobsSection from './components/MonthlyJobsSection';
+import ManagementAssessmentSection, { DEFAULT_QUESTIONS } from './components/ManagementAssessmentSection';
+import NonConformitiesSection from './components/NonConformitiesSection';
+import RiskAnalysisSection from './components/RiskAnalysisSection';
 import { useToast } from './components/Toast';
 import { useOffline } from './hooks/useOffline';
 import { generateReportAnalysis } from './services/geminiService';
 import { saveProject, saveAutoDraft, loadAutoDraft, hasAutoDraft, getAutoDraftTimestamp, clearAutoDraft } from './services/dbService';
 import { parseShareableUrl, clearShareParameter } from './services/collaborationService';
-import { ReportData, ReportImages, TestPoint, ReportPhoto, JobType, Tank, TankPhotoSet } from './types';
+import {
+  ReportData, ReportImages, TestPoint, ReportPhoto, JobType, Tank, TankPhotoSet,
+  Asset, ScheduledJob, ManagementAssessment, ManagementPerson, ManagementQuestion,
+  NonConformity, ActionItem, SiteRiskAnalysis, ControlMeasure, ExtendedReportData
+} from './types';
 
 const CLIENT_LIST = [
   "NHS Property Services",
@@ -42,7 +52,7 @@ const INITIAL_TANK: Tank = {
   capacity: ''
 };
 
-const INITIAL_DATA: ReportData = {
+const INITIAL_DATA: ExtendedReportData = {
   jobType: 'Pipework',
   clientName: '',
   commissionedBy: '',
@@ -64,7 +74,80 @@ const INITIAL_DATA: ReportData = {
   incomingMainsPh: '7.0',
   residualChlorine: '<0.5',
   scopeOfWorks: '',
-  comments: ''
+  comments: '',
+  // Extended data
+  assets: [],
+  scheduledJobs: [],
+  nonConformities: [],
+  managementAssessment: {
+    assessmentDate: new Date().toISOString().split('T')[0],
+    assessor: '',
+    managementTeam: [],
+    questions: DEFAULT_QUESTIONS,
+    overallScore: 0,
+    recommendations: ''
+  },
+  siteRiskAnalysis: {
+    siteId: '',
+    siteName: '',
+    assessmentDate: new Date().toISOString().split('T')[0],
+    assessor: '',
+    controlMeasures: [],
+    overallRiskRating: 'Medium',
+    reviewDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] // 1 year from now
+  }
+};
+
+const INITIAL_ASSET: Asset = {
+  id: '',
+  name: '',
+  location: '',
+  type: 'Tank',
+  condition: 'Good',
+  riskLevel: 'Low'
+};
+
+const INITIAL_JOB: ScheduledJob = {
+  id: '',
+  assetId: '',
+  assetName: '',
+  location: '',
+  taskType: '',
+  dueDate: '',
+  frequency: 'Monthly',
+  status: 'Pending'
+};
+
+const INITIAL_NC: NonConformity = {
+  id: '',
+  dateIdentified: new Date().toISOString().split('T')[0],
+  category: '',
+  description: '',
+  location: '',
+  severity: 'Minor',
+  status: 'Open',
+  actions: []
+};
+
+const INITIAL_ACTION: ActionItem = {
+  id: '',
+  description: '',
+  assignedTo: '',
+  dueDate: '',
+  status: 'Open',
+  priority: 'Medium'
+};
+
+const INITIAL_CONTROL_MEASURE: ControlMeasure = {
+  id: '',
+  hazard: 'Legionella - Hot Water',
+  riskDescription: '',
+  currentControls: '',
+  riskRating: 'Medium',
+  additionalControls: '',
+  responsiblePerson: '',
+  targetDate: '',
+  status: 'Pending'
 };
 
 // --- Helpers for Save/Load ---
@@ -84,12 +167,15 @@ const base64ToFile = async (dataUrl: string, fileName: string): Promise<File> =>
 };
 // -----------------------------
 
+type AppTab = 'report' | 'assets' | 'jobs' | 'management' | 'nonconformities' | 'risk';
+
 const App: React.FC = () => {
   const [view, setView] = useState<'form' | 'report'>('form');
+  const [activeTab, setActiveTab] = useState<AppTab>('report');
   const [isGenerating, setIsGenerating] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('Processing...');
   const [loadingSubMessage, setLoadingSubMessage] = useState<string | undefined>(undefined);
-  const [data, setData] = useState<ReportData>(INITIAL_DATA);
+  const [data, setData] = useState<ExtendedReportData>(INITIAL_DATA);
   const [images, setImages] = useState<ReportImages>({ evidencePhotos: [], tankPhotos: [] });
   const [phWarning, setPhWarning] = useState<string | null>(null);
   const [recommendedTime, setRecommendedTime] = useState<string | null>(null);
@@ -305,6 +391,215 @@ const App: React.FC = () => {
       tankPhotos: prev.tankPhotos.map(tp =>
         tp.tankId === tankId ? { ...tp, [type]: file } : tp
       )
+    }));
+  };
+
+  // --- Asset Management ---
+  const handleAddAsset = () => {
+    const newAsset: Asset = { ...INITIAL_ASSET, id: Date.now().toString() };
+    setData(prev => ({ ...prev, assets: [...prev.assets, newAsset] }));
+  };
+
+  const handleUpdateAsset = (id: string, updates: Partial<Asset>) => {
+    setData(prev => ({
+      ...prev,
+      assets: prev.assets.map(a => a.id === id ? { ...a, ...updates } : a)
+    }));
+  };
+
+  const handleRemoveAsset = (id: string) => {
+    setData(prev => ({ ...prev, assets: prev.assets.filter(a => a.id !== id) }));
+  };
+
+  // --- Scheduled Jobs Management ---
+  const handleAddJob = () => {
+    const nextMonth = new Date();
+    nextMonth.setMonth(nextMonth.getMonth() + 1);
+    const newJob: ScheduledJob = {
+      ...INITIAL_JOB,
+      id: Date.now().toString(),
+      dueDate: nextMonth.toISOString().split('T')[0]
+    };
+    setData(prev => ({ ...prev, scheduledJobs: [...prev.scheduledJobs, newJob] }));
+  };
+
+  const handleUpdateJob = (id: string, updates: Partial<ScheduledJob>) => {
+    setData(prev => ({
+      ...prev,
+      scheduledJobs: prev.scheduledJobs.map(j => j.id === id ? { ...j, ...updates } : j)
+    }));
+  };
+
+  const handleRemoveJob = (id: string) => {
+    setData(prev => ({ ...prev, scheduledJobs: prev.scheduledJobs.filter(j => j.id !== id) }));
+  };
+
+  // --- Management Assessment ---
+  const handleUpdateManagementAssessment = (updates: Partial<ManagementAssessment>) => {
+    setData(prev => ({
+      ...prev,
+      managementAssessment: prev.managementAssessment ? { ...prev.managementAssessment, ...updates } : undefined
+    }));
+  };
+
+  const handleAddManagementPerson = () => {
+    const newPerson: ManagementPerson = {
+      id: Date.now().toString(),
+      name: '',
+      role: '',
+      responsibilities: []
+    };
+    setData(prev => ({
+      ...prev,
+      managementAssessment: prev.managementAssessment
+        ? { ...prev.managementAssessment, managementTeam: [...prev.managementAssessment.managementTeam, newPerson] }
+        : undefined
+    }));
+  };
+
+  const handleUpdateManagementPerson = (id: string, updates: Partial<ManagementPerson>) => {
+    setData(prev => ({
+      ...prev,
+      managementAssessment: prev.managementAssessment
+        ? {
+            ...prev.managementAssessment,
+            managementTeam: prev.managementAssessment.managementTeam.map(p =>
+              p.id === id ? { ...p, ...updates } : p
+            )
+          }
+        : undefined
+    }));
+  };
+
+  const handleRemoveManagementPerson = (id: string) => {
+    setData(prev => ({
+      ...prev,
+      managementAssessment: prev.managementAssessment
+        ? {
+            ...prev.managementAssessment,
+            managementTeam: prev.managementAssessment.managementTeam.filter(p => p.id !== id)
+          }
+        : undefined
+    }));
+  };
+
+  const handleUpdateManagementQuestion = (id: string, updates: Partial<ManagementQuestion>) => {
+    setData(prev => ({
+      ...prev,
+      managementAssessment: prev.managementAssessment
+        ? {
+            ...prev.managementAssessment,
+            questions: prev.managementAssessment.questions.map(q =>
+              q.id === id ? { ...q, ...updates } : q
+            )
+          }
+        : undefined
+    }));
+  };
+
+  // --- Non-Conformities Management ---
+  const handleAddNonConformity = () => {
+    const newNC: NonConformity = {
+      ...INITIAL_NC,
+      id: Date.now().toString()
+    };
+    setData(prev => ({ ...prev, nonConformities: [...prev.nonConformities, newNC] }));
+  };
+
+  const handleUpdateNonConformity = (id: string, updates: Partial<NonConformity>) => {
+    setData(prev => ({
+      ...prev,
+      nonConformities: prev.nonConformities.map(nc =>
+        nc.id === id ? { ...nc, ...updates } : nc
+      )
+    }));
+  };
+
+  const handleRemoveNonConformity = (id: string) => {
+    setData(prev => ({ ...prev, nonConformities: prev.nonConformities.filter(nc => nc.id !== id) }));
+  };
+
+  const handleAddAction = (ncId: string) => {
+    const newAction: ActionItem = {
+      ...INITIAL_ACTION,
+      id: Date.now().toString(),
+      dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] // 1 week from now
+    };
+    setData(prev => ({
+      ...prev,
+      nonConformities: prev.nonConformities.map(nc =>
+        nc.id === ncId ? { ...nc, actions: [...nc.actions, newAction] } : nc
+      )
+    }));
+  };
+
+  const handleUpdateAction = (ncId: string, actionId: string, updates: Partial<ActionItem>) => {
+    setData(prev => ({
+      ...prev,
+      nonConformities: prev.nonConformities.map(nc =>
+        nc.id === ncId
+          ? { ...nc, actions: nc.actions.map(a => a.id === actionId ? { ...a, ...updates } : a) }
+          : nc
+      )
+    }));
+  };
+
+  const handleRemoveAction = (ncId: string, actionId: string) => {
+    setData(prev => ({
+      ...prev,
+      nonConformities: prev.nonConformities.map(nc =>
+        nc.id === ncId
+          ? { ...nc, actions: nc.actions.filter(a => a.id !== actionId) }
+          : nc
+      )
+    }));
+  };
+
+  // --- Risk Analysis Management ---
+  const handleUpdateRiskAnalysis = (updates: Partial<SiteRiskAnalysis>) => {
+    setData(prev => ({
+      ...prev,
+      siteRiskAnalysis: prev.siteRiskAnalysis ? { ...prev.siteRiskAnalysis, ...updates } : undefined
+    }));
+  };
+
+  const handleAddControlMeasure = () => {
+    const newCM: ControlMeasure = {
+      ...INITIAL_CONTROL_MEASURE,
+      id: Date.now().toString(),
+      targetDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] // 30 days from now
+    };
+    setData(prev => ({
+      ...prev,
+      siteRiskAnalysis: prev.siteRiskAnalysis
+        ? { ...prev.siteRiskAnalysis, controlMeasures: [...prev.siteRiskAnalysis.controlMeasures, newCM] }
+        : undefined
+    }));
+  };
+
+  const handleUpdateControlMeasure = (id: string, updates: Partial<ControlMeasure>) => {
+    setData(prev => ({
+      ...prev,
+      siteRiskAnalysis: prev.siteRiskAnalysis
+        ? {
+            ...prev.siteRiskAnalysis,
+            controlMeasures: prev.siteRiskAnalysis.controlMeasures.map(cm =>
+              cm.id === id ? { ...cm, ...updates } : cm
+            )
+          }
+        : undefined
+    }));
+  };
+
+  const handleRemoveControlMeasure = (id: string) => {
+    setData(prev => ({
+      ...prev,
+      siteRiskAnalysis: prev.siteRiskAnalysis
+        ? {
+            ...prev.siteRiskAnalysis,
+            controlMeasures: prev.siteRiskAnalysis.controlMeasures.filter(cm => cm.id !== id)
+          }
+        : undefined
     }));
   };
 
@@ -735,6 +1030,38 @@ const App: React.FC = () => {
 
       <main className="max-w-5xl mx-auto px-4 py-8 space-y-8">
 
+        {/* Tab Navigation */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="flex overflow-x-auto">
+            {[
+              { id: 'report' as AppTab, label: 'Report', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
+              { id: 'assets' as AppTab, label: 'Assets', icon: 'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10' },
+              { id: 'jobs' as AppTab, label: 'Monthly Jobs', icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z' },
+              { id: 'management' as AppTab, label: 'Management', icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z' },
+              { id: 'nonconformities' as AppTab, label: 'Non-Conformities', icon: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z' },
+              { id: 'risk' as AppTab, label: 'Risk Analysis', icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' }
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center gap-2 px-4 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
+                  activeTab === tab.id
+                    ? 'border-blue-600 text-blue-600 bg-blue-50/50'
+                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={tab.icon} />
+                </svg>
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Report Tab Content */}
+        {activeTab === 'report' && (
+          <>
         {/* Branding */}
         <section className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
           <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex items-center justify-between">
@@ -1025,6 +1352,238 @@ const App: React.FC = () => {
             )}
           </div>
         </section>
+          </>
+        )}
+
+        {/* Assets Tab Content */}
+        {activeTab === 'assets' && (
+          <section className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+            <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+              <h2 className="font-bold text-slate-800 flex items-center gap-2">
+                <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                </svg>
+                Asset Register & Analysis
+              </h2>
+              <button onClick={handleAddAsset} className="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">+ Add Asset</button>
+            </div>
+            <div className="p-6 space-y-6">
+              {/* Asset Analysis Graphs */}
+              <AssetAnalysisGraphs assets={data.assets} />
+
+              {/* Asset Table */}
+              <div className="mt-6">
+                <h3 className="font-medium text-slate-700 mb-3">Asset Register</h3>
+                <SortableTable
+                  data={data.assets}
+                  columns={[
+                    { key: 'name', header: 'Asset Name' },
+                    { key: 'location', header: 'Location' },
+                    { key: 'type', header: 'Type', render: (v) => <span className="text-sm">{v}</span> },
+                    {
+                      key: 'condition',
+                      header: 'Condition',
+                      render: (v) => (
+                        <span className={`text-xs px-2 py-1 rounded-full ${
+                          v === 'Good' ? 'bg-green-100 text-green-700' :
+                          v === 'Fair' ? 'bg-yellow-100 text-yellow-700' :
+                          v === 'Poor' ? 'bg-orange-100 text-orange-700' :
+                          'bg-red-100 text-red-700'
+                        }`}>{v}</span>
+                      )
+                    },
+                    {
+                      key: 'riskLevel',
+                      header: 'Risk',
+                      render: (v) => (
+                        <span className={`text-xs px-2 py-1 rounded-full ${
+                          v === 'Low' ? 'bg-green-100 text-green-700' :
+                          v === 'Medium' ? 'bg-amber-100 text-amber-700' :
+                          'bg-red-100 text-red-700'
+                        }`}>{v}</span>
+                      )
+                    },
+                    { key: 'lastServiceDate', header: 'Last Service', render: (v) => v ? new Date(v).toLocaleDateString('en-GB') : '-' },
+                    {
+                      key: 'id',
+                      header: '',
+                      sortable: false,
+                      width: 'w-16',
+                      render: (_, row) => (
+                        <button onClick={() => handleRemoveAsset(row.id)} className="text-red-400 hover:text-red-600">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      )
+                    }
+                  ] as Column<Asset>[]}
+                  keyField="id"
+                  emptyMessage="No assets registered. Add assets to start tracking."
+                />
+              </div>
+
+              {/* Inline Asset Editor */}
+              {data.assets.length > 0 && (
+                <div className="space-y-3 pt-4 border-t border-slate-200">
+                  <h4 className="font-medium text-slate-700 text-sm">Edit Assets</h4>
+                  {data.assets.map((asset, idx) => (
+                    <div key={asset.id} className="grid grid-cols-2 md:grid-cols-6 gap-2 p-3 bg-slate-50 rounded-lg">
+                      <input
+                        type="text"
+                        value={asset.name}
+                        onChange={(e) => handleUpdateAsset(asset.id, { name: e.target.value })}
+                        className="border rounded px-2 py-1 text-sm"
+                        placeholder="Asset name"
+                      />
+                      <input
+                        type="text"
+                        value={asset.location}
+                        onChange={(e) => handleUpdateAsset(asset.id, { location: e.target.value })}
+                        className="border rounded px-2 py-1 text-sm"
+                        placeholder="Location"
+                      />
+                      <select
+                        value={asset.type}
+                        onChange={(e) => handleUpdateAsset(asset.id, { type: e.target.value as Asset['type'] })}
+                        className="border rounded px-2 py-1 text-sm"
+                      >
+                        <option value="Tank">Tank</option>
+                        <option value="Pipework">Pipework</option>
+                        <option value="Pump">Pump</option>
+                        <option value="Valve">Valve</option>
+                        <option value="Cylinder">Cylinder</option>
+                        <option value="Other">Other</option>
+                      </select>
+                      <select
+                        value={asset.condition}
+                        onChange={(e) => handleUpdateAsset(asset.id, { condition: e.target.value as Asset['condition'] })}
+                        className="border rounded px-2 py-1 text-sm"
+                      >
+                        <option value="Good">Good</option>
+                        <option value="Fair">Fair</option>
+                        <option value="Poor">Poor</option>
+                        <option value="Critical">Critical</option>
+                      </select>
+                      <select
+                        value={asset.riskLevel}
+                        onChange={(e) => handleUpdateAsset(asset.id, { riskLevel: e.target.value as Asset['riskLevel'] })}
+                        className="border rounded px-2 py-1 text-sm"
+                      >
+                        <option value="Low">Low</option>
+                        <option value="Medium">Medium</option>
+                        <option value="High">High</option>
+                      </select>
+                      <input
+                        type="date"
+                        value={asset.lastServiceDate || ''}
+                        onChange={(e) => handleUpdateAsset(asset.id, { lastServiceDate: e.target.value })}
+                        className="border rounded px-2 py-1 text-sm"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* Monthly Jobs Tab Content */}
+        {activeTab === 'jobs' && (
+          <section className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+            <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+              <h2 className="font-bold text-slate-800 flex items-center gap-2">
+                <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                Scheduled Jobs
+              </h2>
+            </div>
+            <div className="p-6">
+              <MonthlyJobsSection
+                jobs={data.scheduledJobs}
+                assets={data.assets}
+                onAddJob={handleAddJob}
+                onUpdateJob={handleUpdateJob}
+                onRemoveJob={handleRemoveJob}
+              />
+            </div>
+          </section>
+        )}
+
+        {/* Management Tab Content */}
+        {activeTab === 'management' && data.managementAssessment && (
+          <section className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+            <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+              <h2 className="font-bold text-slate-800 flex items-center gap-2">
+                <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+                Management Control Assessment
+              </h2>
+            </div>
+            <div className="p-6">
+              <ManagementAssessmentSection
+                assessment={data.managementAssessment}
+                onUpdateAssessment={handleUpdateManagementAssessment}
+                onAddPerson={handleAddManagementPerson}
+                onUpdatePerson={handleUpdateManagementPerson}
+                onRemovePerson={handleRemoveManagementPerson}
+                onUpdateQuestion={handleUpdateManagementQuestion}
+              />
+            </div>
+          </section>
+        )}
+
+        {/* Non-Conformities Tab Content */}
+        {activeTab === 'nonconformities' && (
+          <section className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+            <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+              <h2 className="font-bold text-slate-800 flex items-center gap-2">
+                <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                Non-Conformities & Actions Log
+              </h2>
+            </div>
+            <div className="p-6">
+              <NonConformitiesSection
+                nonConformities={data.nonConformities}
+                onAddNonConformity={handleAddNonConformity}
+                onUpdateNonConformity={handleUpdateNonConformity}
+                onRemoveNonConformity={handleRemoveNonConformity}
+                onAddAction={handleAddAction}
+                onUpdateAction={handleUpdateAction}
+                onRemoveAction={handleRemoveAction}
+                managementTeam={data.managementAssessment?.managementTeam}
+              />
+            </div>
+          </section>
+        )}
+
+        {/* Risk Analysis Tab Content */}
+        {activeTab === 'risk' && data.siteRiskAnalysis && (
+          <section className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+            <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+              <h2 className="font-bold text-slate-800 flex items-center gap-2">
+                <svg className="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+                Site Risk Analysis
+              </h2>
+            </div>
+            <div className="p-6">
+              <RiskAnalysisSection
+                riskAnalysis={data.siteRiskAnalysis}
+                onUpdateRiskAnalysis={handleUpdateRiskAnalysis}
+                onAddControlMeasure={handleAddControlMeasure}
+                onUpdateControlMeasure={handleUpdateControlMeasure}
+                onRemoveControlMeasure={handleRemoveControlMeasure}
+                managementTeam={data.managementAssessment?.managementTeam || []}
+              />
+            </div>
+          </section>
+        )}
 
         {/* Action Bar */}
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 p-4 shadow-lg z-40">

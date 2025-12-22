@@ -96,3 +96,124 @@ export interface GeneratedContent {
   comments: string;
   status: 'draft' | 'generated';
 }
+
+// Asset Types for Asset Analysis
+export interface Asset {
+  id: string;
+  name: string;
+  location: string;
+  type: 'Tank' | 'Pipework' | 'Pump' | 'Valve' | 'Cylinder' | 'Other';
+  installDate?: string;
+  lastServiceDate?: string;
+  nextServiceDue?: string;
+  condition: 'Good' | 'Fair' | 'Poor' | 'Critical';
+  riskLevel: 'Low' | 'Medium' | 'High';
+  notes?: string;
+}
+
+export interface AssetAnalysis {
+  totalAssets: number;
+  byCondition: { Good: number; Fair: number; Poor: number; Critical: number };
+  byRiskLevel: { Low: number; Medium: number; High: number };
+  byType: Record<string, number>;
+}
+
+// Monthly Jobs Types
+export interface ScheduledJob {
+  id: string;
+  assetId: string;
+  assetName: string;
+  location: string;
+  taskType: string;
+  dueDate: string;
+  frequency: 'Weekly' | 'Monthly' | 'Quarterly' | 'Annually';
+  status: 'Pending' | 'Completed' | 'Overdue';
+  assignedTo?: string;
+  notes?: string;
+}
+
+// Management Structure Types
+export interface ManagementPerson {
+  id: string;
+  name: string;
+  role: string;
+  email?: string;
+  phone?: string;
+  responsibilities: string[];
+}
+
+export interface ManagementQuestion {
+  id: string;
+  category: string;
+  question: string;
+  response: 'Yes' | 'No' | 'Partial' | 'N/A' | '';
+  evidence?: string;
+  notes?: string;
+}
+
+export interface ManagementAssessment {
+  assessmentDate: string;
+  assessor: string;
+  managementTeam: ManagementPerson[];
+  questions: ManagementQuestion[];
+  overallScore?: number;
+  recommendations?: string;
+}
+
+// Non-Conformities and Actions Log Types
+export interface ActionItem {
+  id: string;
+  description: string;
+  assignedTo: string;
+  dueDate: string;
+  status: 'Open' | 'In Progress' | 'Completed' | 'Overdue';
+  priority: 'Low' | 'Medium' | 'High' | 'Critical';
+  completedDate?: string;
+  notes?: string;
+}
+
+export interface NonConformity {
+  id: string;
+  dateIdentified: string;
+  category: string;
+  description: string;
+  location: string;
+  severity: 'Minor' | 'Major' | 'Critical';
+  status: 'Open' | 'In Progress' | 'Closed';
+  actions: ActionItem[];
+  rootCause?: string;
+  closedDate?: string;
+}
+
+// Risk Analysis Types
+export interface ControlMeasure {
+  id: string;
+  hazard: string;
+  riskDescription: string;
+  currentControls: string;
+  riskRating: 'Low' | 'Medium' | 'High' | 'Very High';
+  additionalControls: string;
+  responsiblePerson: string;
+  targetDate: string;
+  status: 'Pending' | 'Implemented' | 'Verified';
+  verificationDate?: string;
+}
+
+export interface SiteRiskAnalysis {
+  siteId: string;
+  siteName: string;
+  assessmentDate: string;
+  assessor: string;
+  controlMeasures: ControlMeasure[];
+  overallRiskRating: 'Low' | 'Medium' | 'High';
+  reviewDate: string;
+}
+
+// Extended Report Data to include new features
+export interface ExtendedReportData extends ReportData {
+  assets: Asset[];
+  scheduledJobs: ScheduledJob[];
+  managementAssessment?: ManagementAssessment;
+  nonConformities: NonConformity[];
+  siteRiskAnalysis?: SiteRiskAnalysis;
+}
